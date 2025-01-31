@@ -13,6 +13,7 @@ if [ $# == 0 ] || [ $# -gt 2 ]; then
 	echo "Optional architectures are:"
 	echo " x86"
 	echo " x86_64"
+	echo "arm"
 	echo
 	exit 1
 fi
@@ -38,11 +39,16 @@ if [ "$2" != "" ]; then
 		CURRENT_ARCH="x86"
 	elif [ "$2" == "x86_64" ]; then
 		CURRENT_ARCH="x86_64"
+		elif [ "$2" == "ppc" ]; then
+		CURRENT_ARCH="ppc"
+	elif [ "$2" == "arm" ]; then
+		CURRENT_ARCH="arm64"
 	else
 		echo "Invalid architecture: $2"
 		echo "Valid architectures are:"
 		echo " x86"
 		echo " x86_64"
+		echo "arm64"
 		echo
 		exit 1
 	fi
@@ -73,6 +79,7 @@ function symlinkArch()
 
     IS32=`file "${SRCFILE}.${EXT}" | grep "i386"`
     IS64=`file "${SRCFILE}.${EXT}" | grep "x86_64"`
+	ISARM=`file "${SRCFILE}.${EXT}" | grep "arm64"`
 
     if [ "${IS32}" != "" ]; then
         if [ ! -L "${DSTFILE}.${EXT}" ]; then
@@ -90,12 +97,21 @@ function symlinkArch()
         rm "${DSTFILE}.${EXT}"
     fi
 
+	if [ "${ISARM}" != "" ]; then
+        if [ ! -L "${DSTFILE}arm64.${EXT}" ]; then
+            ln -s "${SRCFILE}.${EXT}" "${DSTFILE}arm64.${EXT}"
+        fi
+    elif [ -L "${DSTFILE}arm64.${EXT}" ]; then
+        rm "${DSTFILE}arm64.${EXT}"
+    fi
+
     popd > /dev/null
 }
 
-SEARCH_ARCHS=" \
-	x86 \
-	x86_64 \
+SEARCH_ARCHS="
+	x86
+	x86_64
+	arm64
 "
 
 HAS_LIPO=`command -v lipo`
@@ -111,6 +127,16 @@ fi
 # if the optional arch parameter is used, replace SEARCH_ARCHS to only work with one
 if [ "${CURRENT_ARCH}" != "" ]; then
 	SEARCH_ARCHS="${CURRENT_ARCH}"
+fi
+
+# select SDL run-time dylib
+if [ "${MACOSX_DEPLOYMENT_TARGET}" = "10.5" ] \
+  || [ "${MACOSX_DEPLOYMENT_TARGET}" = "10.6" ] \
+  || [ "${MACOSX_DEPLOYMENT_TARGET}" = "10.7" ] \
+  || [ "${MACOSX_DEPLOYMENT_TARGET}" = "10.8" ]; then
+  UNIVERSAL_BINARY=1
+else
+  UNIVERSAL_BINARY=2
 fi
 
 AVAILABLE_ARCHS=""
@@ -165,7 +191,8 @@ EXECUTABLE_NAME="tremulous"
 # loop through the architectures to build string lists for each universal binary
 for ARCH in $SEARCH_ARCHS; do
 	CURRENT_ARCH=${ARCH}
-	BUILT_PRODUCTS_DIR="${OBJROOT}/${TARGET_NAME}-darwin-${CURRENT_ARCH}"
+	echo "Current arch: ${CURRENT_ARCH}"
+	BUILT_PRODUCTS_DIR="${OBJROOT}/${TARGET_NAME}-darwin-arm"
 	IOQ3_CLIENT="${EXECUTABLE_NAME}"
 	IOQ3_SERVER="${DEDICATED_NAME}"
 	IOQ3_RENDERER_GL1="${RENDERER_OPENGL}1.dylib"
@@ -175,17 +202,20 @@ for ARCH in $SEARCH_ARCHS; do
 	IOQ3_UI="${UI}.dylib"
 
 	if [ ! -d ${BUILT_PRODUCTS_DIR} ]; then
+		echo "No build directory for ${CURRENT_ARCH}"
 		CURRENT_ARCH=""
 		BUILT_PRODUCTS_DIR=""
-		continue
+		exit -1
 	fi
 
 	# executables
 	if [ -e ${BUILT_PRODUCTS_DIR}/${IOQ3_CLIENT} ]; then
+		echo "${BUILT_PRODUCTS_DIR}/${IOQ3_CLIENT} ${IOQ3_CLIENT_ARCHS}"
 		IOQ3_CLIENT_ARCHS="${BUILT_PRODUCTS_DIR}/${IOQ3_CLIENT} ${IOQ3_CLIENT_ARCHS}"
 		VALID_ARCHS="${ARCH} ${VALID_ARCHS}"
 	else
-		continue
+		echo "Meg mindig valami fos kiegek"
+		exit -1
 	fi
 	if [ -e ${BUILT_PRODUCTS_DIR}/${IOQ3_SERVER} ]; then
 		IOQ3_SERVER_ARCHS="${BUILT_PRODUCTS_DIR}/${IOQ3_SERVER} ${IOQ3_SERVER_ARCHS}"
@@ -228,12 +258,16 @@ fi
 
 # set the final application bundle output directory
 if [ "${2}" == "" ]; then
-	BUILT_PRODUCTS_DIR="${OBJROOT}/${TARGET_NAME}-darwin-universal"
+	if [ -n "${MACOSX_DEPLOYMENT_TARGET_ARM64}" ]; then
+		BUILT_PRODUCTS_DIR="${OBJROOT}/${TARGET_NAME}-darwin-arm"
+	else
+		BUILT_PRODUCTS_DIR="${OBJROOT}/${TARGET_NAME}-darwin-arm"
+	fi
 	if [ ! -d ${BUILT_PRODUCTS_DIR} ]; then
 		mkdir -p ${BUILT_PRODUCTS_DIR} || exit 1;
 	fi
 else
-	BUILT_PRODUCTS_DIR="${OBJROOT}/${TARGET_NAME}-darwin-${CURRENT_ARCH}"
+	BUILT_PRODUCTS_DIR="${OBJROOT}/${TARGET_NAME}-darwin-arm"
 fi
 
 BUNDLEBINDIR="${BUILT_PRODUCTS_DIR}/${EXECUTABLE_FOLDER_PATH}"
@@ -256,7 +290,11 @@ if [ ! -d ${BUILT_PRODUCTS_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH} ]; then
 fi
 
 # copy and generate some application bundle resources
-cp external/libs/macosx/*.dylib ${BUILT_PRODUCTS_DIR}/${EXECUTABLE_FOLDER_PATH}
+if [ $UNIVERSAL_BINARY -eq 2 ]; then
+	cp external/libs/macosx/*.dylib "${BUILT_PRODUCTS_DIR}/${EXECUTABLE_FOLDER_PATH}"
+else
+	cp external/libs/macosx/*.dylib "${BUILT_PRODUCTS_DIR}/${EXECUTABLE_FOLDER_PATH}"
+fi
 cp ${ICNSDIR}/${ICNS} ${BUILT_PRODUCTS_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/$ICNS || exit 1;
 cp	"${BUILT_PRODUCTS_DIR}/${BASEDIR}/${VMS_PK3}" "${BUNDLEBINDIR}/${BASEDIR}/${VMS_PK3}"
 cp	"${BUILT_PRODUCTS_DIR}/${BASEDIR}/${DATA_PK3}" "${BUNDLEBINDIR}/${BASEDIR}/${DATA_PK3}"
